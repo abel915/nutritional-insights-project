@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nutritional Insights Dashboard</title>
+
+<!-- Tailwind CSS -->
+<link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.0.0/dist/tailwind.min.css" rel="stylesheet">
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+
+<style>
+  .heat-cell { aspect-ratio: 1 / 1; display:flex; align-items:center; justify-content:center;
+               font-size:11px; color:#fff; border-radius:4px; }
+  .spinner { border: 3px solid #e5e7eb; border-top: 3px solid #2563eb; border-radius: 50%;
+             width: 18px; height: 18px; animation: spin 0.8s linear infinite; display:inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .badge-mock { background:#fef3c7; color:#92400e; }
+  .badge-live { background:#dcfce7; color:#166534; }
+</style>
+</head>
+<body class="bg-gray-100">
+
+<header class="bg-blue-600 p-4 text-white flex items-center justify-between flex-wrap gap-2">
+  <h1 class="text-3xl font-semibold">Nutritional Insights</h1>
+  <div id="metaBar" class="text-sm bg-blue-700/50 rounded px-3 py-1">
+    Last updated: <span id="lastUpdated">never</span> &middot; Exec time: <span id="execTime">&mdash;</span>
+  </div>
+</header>
+
+<main class="container mx-auto p-6">
+
+  <!-- ===================== CONFIG BANNER ===================== -->
+  <section class="mb-6 bg-white p-4 shadow rounded-lg flex flex-wrap items-center gap-3">
+    <label class="font-semibold text-sm">Azure Function base URL:</label>
+    <input id="apiBase" type="text" placeholder="https://&lt;your-function-app&gt;.azurewebsites.net/api"
+           class="p-2 border rounded flex-1 min-w-[260px] text-sm">
+    <button id="saveApiBase" class="bg-gray-800 text-white text-sm py-2 px-3 rounded">Save</button>
+    <span id="apiBaseStatus" class="text-xs text-gray-500">Not set &mdash; using mock data</span>
+  </section>
+
+  <!-- ===================== CHARTS ===================== -->
+  <section class="mb-8">
+    <h2 class="text-2xl font-semibold mb-4">Explore Nutritional Insights</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div class="bg-white p-4 shadow-lg rounded-lg">
+        <h3 class="font-semibold">Bar Chart</h3>
+        <p class="text-sm text-gray-600 mb-2">Average macronutrient content by diet type.</p>
+        <canvas id="barChart" class="w-full h-48"></canvas>
+      </div>
+
+      <div class="bg-white p-4 shadow-lg rounded-lg">
+        <h3 class="font-semibold">Scatter Plot</h3>
+        <p class="text-sm text-gray-600 mb-2">Protein vs. carbs per recipe.</p>
+        <canvas id="scatterPlot" class="w-full h-48"></canvas>
+      </div>
+
+      <div class="bg-white p-4 shadow-lg rounded-lg">
+        <h3 class="font-semibold">Heatmap</h3>
+        <p class="text-sm text-gray-600 mb-2">Nutrient correlations.</p>
+        <div id="heatmap" class="w-full"></div>
+      </div>
+
+      <div class="bg-white p-4 shadow-lg rounded-lg">
+        <h3 class="font-semibold">Pie Chart</h3>
+        <p class="text-sm text-gray-600 mb-2">Recipe distribution by diet type.</p>
+        <canvas id="pieChart" class="w-full h-48"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== FILTERS ===================== -->
+  <section class="mb-8">
+    <h2 class="text-2xl font-semibold mb-4">Filters and Data Interaction</h2>
+    <div class="flex flex-wrap gap-4 items-center">
+      <input id="searchInput" type="text" placeholder="Search by diet type"
+             class="p-2 border rounded w-full sm:w-auto">
+      <select id="dietSelect" class="p-2 border rounded w-full sm:w-auto">
+        <option value="all">All Diet Types</option>
+        <option value="mediterranean">Mediterranean</option>
+        <option value="dash">Dash</option>
+        <option value="vegan">Vegan</option>
+        <option value="keto">Keto</option>
+        <option value="paleo">Paleo</option>
+      </select>
+      <button id="applyFilters" class="bg-blue-600 text-white py-2 px-4 rounded">Apply Filters</button>
+      <button id="resetFilters" class="bg-gray-300 py-2 px-4 rounded">Reset</button>
+    </div>
+  </section>
+
+  <!-- ===================== API BUTTONS ===================== -->
+  <section class="mb-8">
+    <h2 class="text-2xl font-semibold mb-4">API Data Interaction</h2>
+    <div class="flex flex-wrap gap-4 items-center">
+      <button data-endpoint="nutritional-insights" class="api-btn bg-blue-600 text-white py-2 px-4 rounded flex items-center gap-2">
+        Get Nutritional Insights
+      </button>
+      <button data-endpoint="recipes" class="api-btn bg-green-600 text-white py-2 px-4 rounded flex items-center gap-2">
+        Get Recipes
+      </button>
+      <button data-endpoint="clusters" class="api-btn bg-purple-600 text-white py-2 px-4 rounded flex items-center gap-2">
+        Get Clusters
+      </button>
+      <span id="apiStatus" class="text-sm text-gray-500"></span>
+    </div>
+    <div id="clustersPanel" class="mt-4 text-sm text-gray-700"></div>
+  </section>
+
+  <!-- ===================== RECIPE TABLE / PAGINATION ===================== -->
+  <section>
+    <h2 class="text-2xl font-semibold mb-4">Recipes</h2>
+    <div class="bg-white shadow rounded-lg overflow-x-auto">
+      <table class="min-w-full text-sm text-left">
+        <thead class="bg-gray-50 border-b">
+          <tr>
+            <th class="p-3">Recipe</th>
+            <th class="p-3">Diet Type</th>
+            <th class="p-3">Calories</th>
+            <th class="p-3">Protein (g)</th>
+            <th class="p-3">Carbs (g)</th>
+            <th class="p-3">Fat (g)</th>
+          </tr>
+        </thead>
+        <tbody id="recipeTableBody"></tbody>
+      </table>
+    </div>
+    <div id="paginationControls" class="flex justify-center items-center gap-2 mt-4"></div>
+  </section>
+
+</main>
+
+<footer class="bg-blue-600 p-4 text-white text-center mt-10">
+  <p>&copy; 2026 Nutritional Insights. All Rights Reserved.</p>
+</footer>
+
+<script>
+/* =========================================================================
+   CONFIG
+   Set the Azure Function base URL once deployed, e.g.
+   https://diet-analysis-func.azurewebsites.net/api
+   Expected endpoints (adjust names in fetchFromApi() if yours differ):
+     GET  {base}/nutritional-insights   -> { diets: [...], correlations: [...] }
+     GET  {base}/recipes                -> { recipes: [...] }
+     GET  {base}/clusters                -> { clusters: [...] }
+   Each response may optionally include "executionTimeMs": <number>.
+   ========================================================================= */
+const LS_KEY = "nutri_dashboard_api_base";
+let API_BASE = localStorage.getItem(LS_KEY) || "";
+
+const apiBaseInput = document.getElementById("apiBase");
+const apiBaseStatus = document.getElementById("apiBaseStatus");
+apiBaseInput.value = API_BASE;
+updateApiBaseStatus();
+
+document.getElementById("saveApiBase").addEventListener("click", () => {
+  API_BASE = apiBaseInput.value.trim().replace(/\/$/, "");
+  try { localStorage.setItem(LS_KEY, API_BASE); } catch (e) {}
+  updateApiBaseStatus();
+});
+
+function updateApiBaseStatus() {
+  apiBaseStatus.textContent = API_BASE
+    ? `Live mode → ${API_BASE}`
+    : "Not set — using mock data";
+}
+
+/* =========================================================================
+   MOCK DATA (used until a real Azure Function base URL is configured)
+   ========================================================================= */
+const DIET_TYPES = ["mediterranean", "dash", "vegan", "keto", "paleo"];
+
+function mockDietAverages() {
+  return DIET_TYPES.map(d => ({
+    diet: d,
+    protein: Math.round(15 + Math.random() * 25),
+    carbs: Math.round(20 + Math.random() * 40),
+    fat: Math.round(10 + Math.random() * 25)
+  }));
+}
+
+function mockRecipes(n = 42) {
+  const names = ["Buddha Bowl", "Grilled Salmon", "Zucchini Noodles", "Avocado Toast",
+                 "Cauliflower Rice", "Lentil Soup", "Greek Salad", "Stuffed Peppers",
+                 "Chia Pudding", "Baked Tofu", "Quinoa Salad", "Veggie Stir Fry"];
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const diet = DIET_TYPES[i % DIET_TYPES.length];
+    out.push({
+      name: `${names[i % names.length]} #${i + 1}`,
+      diet,
+      calories: Math.round(250 + Math.random() * 450),
+      protein: Math.round(8 + Math.random() * 35),
+      carbs: Math.round(10 + Math.random() * 55),
+      fat: Math.round(5 + Math.random() * 30)
+    });
+  }
+  return out;
+}
+
+function mockCorrelations() {
+  const labels = ["Protein", "Carbs", "Fat", "Calories"];
+  const matrix = labels.map((_, i) =>
+    labels.map((_, j) => (i === j ? 1 : +(Math.random() * 1.6 - 0.8).toFixed(2)))
+  );
+  return { labels, matrix };
+}
+
+function mockClusters() {
+  return DIET_TYPES.map((d, i) => ({
+    cluster: i, dominantDiet: d, count: 20 + Math.round(Math.random() * 60),
+    avgProtein: 40 + Math.random() * 60, avgCarbs: 60 + Math.random() * 120, avgFat: 30 + Math.random() * 80
+  }));
+}
+
+/* =========================================================================
+   STATE
+   ========================================================================= */
+let state = {
+  dietAverages: mockDietAverages(),
+  recipes: mockRecipes(),
+  correlations: mockCorrelations(),
+  clusters: mockClusters(),
+  filteredRecipes: [],
+  page: 1,
+  pageSize: 8,
+  filterText: "",
+  filterDiet: "all"
+};
+state.filteredRecipes = state.recipes;
+
+/* =========================================================================
+   API CALLS
+   ========================================================================= */
+async function fetchFromApi(endpoint) {
+  const statusEl = document.getElementById("apiStatus");
+  const btn = document.querySelector(`.api-btn[data-endpoint="${endpoint}"]`);
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner"></span> Loading...`;
+
+  const start = performance.now();
+  try {
+    if (!API_BASE) throw new Error("no-api-base");
+    const res = await fetch(`${API_BASE}/${endpoint}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const clientMs = Math.round(performance.now() - start);
+    applyApiResult(endpoint, data);
+    setMeta(data.executionTimeMs ?? clientMs, true);
+    statusEl.textContent = `${endpoint}: loaded live data (${clientMs} ms round-trip).`;
+  } catch (err) {
+    // Fall back to mock data so the dashboard stays demonstrable without a live backend
+    const clientMs = Math.round(performance.now() - start);
+    applyApiResult(endpoint, mockResultFor(endpoint));
+    setMeta(clientMs, false);
+    statusEl.textContent = API_BASE
+      ? `${endpoint}: request failed (${err.message}) — showing mock data instead.`
+      : `${endpoint}: no API base set — showing mock data. Configure the URL above to go live.`;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+  }
+}
+
+function mockResultFor(endpoint) {
+  if (endpoint === "nutritional-insights") {
+    return { diets: mockDietAverages(), correlations: mockCorrelations() };
+  }
+  if (endpoint === "recipes") {
+    return { recipes: mockRecipes() };
+  }
+  if (endpoint === "clusters") {
+    return { clusters: mockClusters() };
+  }
+  return {};
+}
+
+function applyApiResult(endpoint, data) {
+  if (endpoint === "nutritional-insights") {
+    if (data.diets) state.dietAverages = data.diets;
+    if (data.correlations) state.correlations = data.correlations;
+    renderBarChart();
+    renderHeatmap();
+  }
+  if (endpoint === "recipes" && data.recipes) {
+    state.recipes = data.recipes;
+    applyFilters();
+    renderScatterPlot();
+    renderPieChart();
+  }
+  if (endpoint === "clusters" && data.clusters) {
+    state.clusters = data.clusters;
+    renderClusters();
+  }
+}
+
+function renderClusters() {
+  const el = document.getElementById("clustersPanel");
+  if (!state.clusters || !state.clusters.length) { el.innerHTML = ""; return; }
+  const maxCount = Math.max(...state.clusters.map(c => c.count));
+  el.innerHTML = `<div class="font-medium mb-2">K-means clusters (by macros) — dominant diet per cluster</div>` +
+    state.clusters.map(c => {
+      const pct = Math.round((c.count / maxCount) * 100);
+      const color = DIET_COLORS[c.dominantDiet] || "#64748b";
+      return `<div class="flex items-center gap-2 mb-1">
+                <span class="w-28 shrink-0">Cluster ${c.cluster} (${c.dominantDiet})</span>
+                <div class="flex-1 bg-gray-100 rounded h-4 overflow-hidden">
+                  <div style="width:${pct}%;background:${color}" class="h-4"></div>
+                </div>
+                <span class="w-14 text-right">${c.count}</span>
+              </div>`;
+    }).join("");
+}
+
+function setMeta(execMs, live) {
+  document.getElementById("lastUpdated").textContent = new Date().toLocaleTimeString();
+  document.getElementById("execTime").textContent = `${execMs} ms (${live ? "live" : "mock"})`;
+}
+
+document.querySelectorAll(".api-btn").forEach(btn => {
+  btn.addEventListener("click", () => fetchFromApi(btn.dataset.endpoint));
+});
+
+/* =========================================================================
+   FILTERS
+   ========================================================================= */
+function applyFilters() {
+  const text = state.filterText.trim().toLowerCase();
+  const diet = state.filterDiet;
+  state.filteredRecipes = state.recipes.filter(r => {
+    const matchesText = !text || r.diet.toLowerCase().includes(text) || r.name.toLowerCase().includes(text);
+    const matchesDiet = diet === "all" || r.diet === diet;
+    return matchesText && matchesDiet;
+  });
+  state.page = 1;
+  renderTable();
+  renderPieChart();
+}
+
+document.getElementById("applyFilters").addEventListener("click", () => {
+  state.filterText = document.getElementById("searchInput").value;
+  state.filterDiet = document.getElementById("dietSelect").value;
+  applyFilters();
+});
+
+document.getElementById("resetFilters").addEventListener("click", () => {
+  document.getElementById("searchInput").value = "";
+  document.getElementById("dietSelect").value = "all";
+  state.filterText = "";
+  state.filterDiet = "all";
+  applyFilters();
+});
+
+/* =========================================================================
+   CHARTS
+   ========================================================================= */
+let barChartInst, scatterChartInst, pieChartInst;
+const DIET_COLORS = {
+  vegan: "#16a34a", keto: "#dc2626", paleo: "#d97706",
+  mediterranean: "#2563eb", dash: "#9333ea"
+};
+
+function renderBarChart() {
+  const ctx = document.getElementById("barChart");
+  const labels = state.dietAverages.map(d => d.diet);
+  const data = {
+    labels,
+    datasets: [
+      { label: "Protein", data: state.dietAverages.map(d => d.protein), backgroundColor: "#2563eb" },
+      { label: "Carbs", data: state.dietAverages.map(d => d.carbs), backgroundColor: "#f59e0b" },
+      { label: "Fat", data: state.dietAverages.map(d => d.fat), backgroundColor: "#ef4444" }
+    ]
+  };
+  if (barChartInst) { barChartInst.data = data; barChartInst.update(); return; }
+  barChartInst = new Chart(ctx, {
+    type: "bar",
+    data,
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } }
+  });
+}
+
+function renderScatterPlot() {
+  const ctx = document.getElementById("scatterPlot");
+  const datasets = DIET_TYPES.map(diet => ({
+    label: diet,
+    backgroundColor: DIET_COLORS[diet],
+    data: state.recipes.filter(r => r.diet === diet).map(r => ({ x: r.protein, y: r.carbs }))
+  }));
+  if (scatterChartInst) { scatterChartInst.data.datasets = datasets; scatterChartInst.update(); return; }
+  scatterChartInst = new Chart(ctx, {
+    type: "scatter",
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { x: { title: { display: true, text: "Protein (g)" } },
+                y: { title: { display: true, text: "Carbs (g)" } } },
+      plugins: { legend: { position: "bottom", labels: { boxWidth: 10, font: { size: 9 } } } }
+    }
+  });
+}
+
+function renderPieChart() {
+  const ctx = document.getElementById("pieChart");
+  const counts = DIET_TYPES.map(d => state.filteredRecipes.filter(r => r.diet === d).length);
+  const data = {
+    labels: DIET_TYPES,
+    datasets: [{ data: counts, backgroundColor: DIET_TYPES.map(d => DIET_COLORS[d]) }]
+  };
+  if (pieChartInst) { pieChartInst.data = data; pieChartInst.update(); return; }
+  pieChartInst = new Chart(ctx, {
+    type: "pie",
+    data,
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } }
+  });
+}
+
+function renderHeatmap() {
+  const { labels, matrix } = state.correlations;
+  const el = document.getElementById("heatmap");
+  el.innerHTML = "";
+  const grid = document.createElement("div");
+  grid.style.display = "grid";
+  grid.style.gridTemplateColumns = `80px repeat(${labels.length}, 1fr)`;
+  grid.style.gap = "2px";
+
+  grid.appendChild(document.createElement("div"));
+  labels.forEach(l => {
+    const h = document.createElement("div");
+    h.textContent = l.slice(0, 4);
+    h.className = "text-[10px] text-gray-600 flex items-end justify-center";
+    grid.appendChild(h);
+  });
+
+  matrix.forEach((row, i) => {
+    const rowLabel = document.createElement("div");
+    rowLabel.textContent = labels[i];
+    rowLabel.className = "text-[10px] text-gray-600 flex items-center";
+    grid.appendChild(rowLabel);
+    row.forEach(v => {
+      const cell = document.createElement("div");
+      cell.className = "heat-cell";
+      cell.textContent = v.toFixed(2);
+      cell.style.backgroundColor = correlationColor(v);
+      grid.appendChild(cell);
+    });
+  });
+  el.appendChild(grid);
+}
+
+function correlationColor(v) {
+  // v in [-1, 1]: red for negative, blue for positive
+  const a = Math.min(1, Math.abs(v));
+  return v >= 0
+    ? `rgba(37, 99, 235, ${0.25 + a * 0.6})`
+    : `rgba(220, 38, 38, ${0.25 + a * 0.6})`;
+}
+
+/* =========================================================================
+   TABLE + PAGINATION
+   ========================================================================= */
+function renderTable() {
+  const tbody = document.getElementById("recipeTableBody");
+  const start = (state.page - 1) * state.pageSize;
+  const pageItems = state.filteredRecipes.slice(start, start + state.pageSize);
+  tbody.innerHTML = pageItems.map(r => `
+    <tr class="border-b hover:bg-gray-50">
+      <td class="p-3">${escapeHtml(r.name)}</td>
+      <td class="p-3 capitalize">${escapeHtml(r.diet)}</td>
+      <td class="p-3">${r.calories}</td>
+      <td class="p-3">${r.protein}</td>
+      <td class="p-3">${r.carbs}</td>
+      <td class="p-3">${r.fat}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="6" class="p-4 text-center text-gray-400">No recipes match your filters.</td></tr>`;
+  renderPagination();
+}
+
+function renderPagination() {
+  const totalPages = Math.max(1, Math.ceil(state.filteredRecipes.length / state.pageSize));
+  const el = document.getElementById("paginationControls");
+  el.innerHTML = "";
+
+  const prev = document.createElement("button");
+  prev.textContent = "Previous";
+  prev.className = "px-3 py-1 bg-gray-300 rounded hover:bg-gray-400 disabled:opacity-40";
+  prev.disabled = state.page <= 1;
+  prev.addEventListener("click", () => { state.page--; renderTable(); });
+  el.appendChild(prev);
+
+  const windowSize = 5;
+  let startPage = Math.max(1, state.page - Math.floor(windowSize / 2));
+  let endPage = Math.min(totalPages, startPage + windowSize - 1);
+  startPage = Math.max(1, endPage - windowSize + 1);
+
+  for (let p = startPage; p <= endPage; p++) {
+    const btn = document.createElement("button");
+    btn.textContent = p;
+    btn.className = p === state.page
+      ? "px-3 py-1 bg-blue-600 text-white rounded"
+      : "px-3 py-1 bg-gray-300 rounded hover:bg-gray-400";
+    btn.addEventListener("click", () => { state.page = p; renderTable(); });
+    el.appendChild(btn);
+  }
+
+  const next = document.createElement("button");
+  next.textContent = "Next";
+  next.className = "px-3 py-1 bg-gray-300 rounded hover:bg-gray-400 disabled:opacity-40";
+  next.disabled = state.page >= totalPages;
+  next.addEventListener("click", () => { state.page++; renderTable(); });
+  el.appendChild(next);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+/* =========================================================================
+   INIT
+   ========================================================================= */
+renderBarChart();
+renderScatterPlot();
+renderHeatmap();
+renderPieChart();
+renderTable();
+setMeta(0, false);
+</script>
+
+</body>
+</html>
