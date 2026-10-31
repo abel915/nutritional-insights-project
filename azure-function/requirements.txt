@@ -1,0 +1,4 @@
+azure-functions>=1.21
+pandas>=2.2
+numpy>=1.26
+azure-storage-blob>=12.19
